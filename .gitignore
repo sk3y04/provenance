@@ -1,0 +1,11 @@
+provenance.exe
+downloads/
+*.part
+_provenance_cache/
+__debug_bin
+*.test
+*.out
+.DS_Store
+**/.DS_Store
+.idea/
+/provenance
