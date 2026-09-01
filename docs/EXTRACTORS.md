@@ -342,7 +342,7 @@ func FetchAllIgPosts(ctx, client, cookiesFile, csrfToken, userID, limit, rl) ([]
 
 ### URL parsing
 
-`ParseIgURL()` supports five URL formats:
+`ParseIgURL()` supports six URL formats:
 
 | Format | Example | Result |
 |--------|---------|--------|
@@ -350,7 +350,10 @@ func FetchAllIgPosts(ctx, client, cookiesFile, csrfToken, userID, limit, rl) ([]
 | Single post | `instagram.com/p/SHORTCODE/` | `IgTarget{Type: "post", Shortcode: "SHORTCODE"}` |
 | Single reel | `instagram.com/reel/SHORTCODE/` | `IgTarget{Type: "reel", Shortcode: "SHORTCODE"}` |
 | Stories | `instagram.com/stories/USERNAME/` | `IgTarget{Type: "stories", Username: "USERNAME"}` |
+| Story highlight | `instagram.com/stories/highlights/HIGHLIGHT_ID/` | `IgTarget{Type: "highlight", HighlightID: "HIGHLIGHT_ID"}` |
 | IGTV | `instagram.com/tv/SHORTCODE/` | `IgTarget{Type: "post", Shortcode: "SHORTCODE"}` |
+
+`/stories/highlights/<id>/` is parsed as a highlight, never as a user named `highlights`; active `/stories/<username>/` and highlights do not collide.
 
 Unsupported types (`/explore/`, `/share/`) return errors.
 
@@ -362,7 +365,8 @@ Uses Instagram's REST API v1 (`i.instagram.com/api/v1/`):
 |----------|---------|
 | `/users/web_profile_info/?username=X` | Resolve username → numeric user ID |
 | `/feed/user/{user_id}/?count=12&max_id=CURSOR` | Paginate user's posts |
-| `/feed/reels_media/?reel_ids={user_id}` | Fetch user's stories |
+| `/feed/reels_media/?reel_ids={user_id}` | Fetch user's active (24h) stories |
+| `/feed/reels_media/?reel_ids=highlight:{highlight_id}` | Fetch a story highlight's stories |
 | `/media/{media_id}/info/` | Get single post/reel metadata + media URLs |
 
 No GraphQL query hash tracking required (unlike Twitter). The REST API is simpler and more stable.
@@ -402,7 +406,7 @@ Posts have a `media_type` field:
 ### Data flow (download)
 
 ```
-ParseIgURL(rawURL) → IgTarget (profile | stories | post | reel)
+ParseIgURL(rawURL) → IgTarget (profile | stories | highlight | post | reel)
   │
   ├─ Profile URL:
   │   resolveIgUserID() → multi-method cascade (API → web scrape → JSON → search)
@@ -411,6 +415,11 @@ ParseIgURL(rawURL) → IgTarget (profile | stories | post | reel)
   ├─ Stories URL:
   │   resolveIgUserID() → multi-method cascade
   │   fetchIgStories() → feed/reels_media/?reel_ids={id}
+  │
+  ├─ Highlight URL:
+  │   fetchIgHighlightStories() → feed/reels_media/?reel_ids=highlight:{id}
+  │   owning username resolved from the reel's user/owner object
+  │   (falls back to "highlight_{id}" when unresolvable)
   │
   └─ Post/Reel URL:
       fetchSingleIgPost() → media/{media_id}/info/

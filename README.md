@@ -13,6 +13,9 @@ provenance grab https://www.youtube.com/watch?v=dQw4w9WgXcQ
 # Grab an Instagram profile (cookies required)
 provenance grab --cookies cookies.txt https://www.instagram.com/user/
 
+# Grab an Instagram story highlight (cookies required)
+provenance grab --cookies cookies.txt https://www.instagram.com/stories/highlights/17850787287566382/
+
 # Grab a Reddit subreddit, limit to 20 posts, include post text
 provenance grab --cookies cookies.txt https://www.reddit.com/r/wallpapers --limit 20 --include-posts
 
@@ -65,7 +68,7 @@ See [`docs/CLI.md`](docs/CLI.md) for the full command reference and every flag.
 | YouTube, TikTok, Twitch, Vimeo, SoundCloud, Patreon, Facebook & 1000+ sites | [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) (auto-installed) |
 | **Twitter / X** profiles | Native GraphQL client |
 | **Reddit** user profiles & subreddits | Native JSON API client |
-| **Instagram** profiles, posts, reels, stories | Native REST API v1 client |
+| **Instagram** profiles, posts, reels, stories, story highlights | Native REST API v1 client |
 | JS-heavy sites yt-dlp can't handle | Headless Chrome via `chromedp` |
 
 Deep dive: [`docs/EXTRACTORS.md`](docs/EXTRACTORS.md)

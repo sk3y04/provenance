@@ -15,6 +15,7 @@ func TestParseIgURL(t *testing.T) {
 		wantType        string
 		wantUsername    string
 		wantShortcode   string
+		wantHighlightID string
 		wantErr         bool
 		wantErrContains string
 	}{
@@ -28,6 +29,9 @@ func TestParseIgURL(t *testing.T) {
 		{url: "https://www.instagram.com/username/reel/Chunk8-jurw/", wantType: "reel", wantShortcode: "Chunk8-jurw"},
 		{url: "https://www.instagram.com/explore/tags/test/", wantErr: true, wantErrContains: "unsupported"},
 		{url: "https://www.instagram.com/stories/test/", wantType: "stories", wantUsername: "test"},
+		{url: "https://www.instagram.com/stories/highlights/17850787287566382/", wantType: "highlight", wantHighlightID: "17850787287566382"},
+		{url: "https://www.instagram.com/stories/highlights/17850787287566382", wantType: "highlight", wantHighlightID: "17850787287566382"},
+		{url: "https://www.instagram.com/stories/highlights/17850787287566382/?utm=source", wantType: "highlight", wantHighlightID: "17850787287566382"},
 		{url: "https://www.instagram.com/", wantErr: true},
 		{url: "https://twitter.com/user", wantErr: true, wantErrContains: "not an instagram"},
 	}
@@ -53,6 +57,9 @@ func TestParseIgURL(t *testing.T) {
 		}
 		if target.Shortcode != tt.wantShortcode {
 			t.Errorf("ParseIgURL(%q) shortcode = %q, want %q", tt.url, target.Shortcode, tt.wantShortcode)
+		}
+		if target.HighlightID != tt.wantHighlightID {
+			t.Errorf("ParseIgURL(%q) highlightID = %q, want %q", tt.url, target.HighlightID, tt.wantHighlightID)
 		}
 	}
 }

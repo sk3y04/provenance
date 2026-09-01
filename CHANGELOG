@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Instagram Story Highlights**: `provenance grab https://www.instagram.com/stories/highlights/<id>/` now downloads every story in a highlight — images, videos, and multi-slide carousels — in one command. `ParseIgURL` recognizes the `/stories/highlights/<id>/` path as a new `highlight` target (kept distinct from active `/stories/<username>/` stories). `fetchIgHighlightStories` reuses the same `/feed/reels_media/` endpoint as active stories, addressing the reel via `reel_ids=highlight:<id>`, with `429`/rate-limit backoff, error-preview logging, and `igMaxAttempts` retry matching the story path. The owning username is resolved from the highlight response's `user`/`owner` object so output still lands under `instagram/<username>/`, falling back to `highlight_<id>` when unresolvable; a `supported_capabilities_new` POST recovery is included for highlights that return empty on the bare GET. Wired through `ScanInstagram`, `DownloadInstagram`, and `ScanInstagramResolved`.
+
 ## [0.6.1] - 2026-07-26
 
 ### Added

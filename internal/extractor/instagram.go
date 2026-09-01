@@ -86,9 +86,10 @@ type IgOptions struct {
 }
 
 type IgTarget struct {
-	Type      string // "profile", "post", "reel", "stories"
-	Username  string
-	Shortcode string // only for single post/reel
+	Type        string // "profile", "post", "reel", "stories", "highlight"
+	Username    string
+	Shortcode   string // only for single post/reel
+	HighlightID string // only for /stories/highlights/<id>/
 }
 
 func ParseIgURL(rawURL string) (IgTarget, error) {
@@ -116,8 +117,20 @@ func ParseIgURL(rawURL string) (IgTarget, error) {
 				return IgTarget{Type: "reel", Shortcode: parts[i+1]}, nil
 			}
 		case "stories":
+			if i+1 < len(parts) {
+				// /stories/highlights/<id>/ is a highlight, not a user's active
+				// stories; defer to the "highlights" case below instead of
+				// mistaking "highlights" for a username.
+				if parts[i+1] == "highlights" {
+					continue
+				}
+				if parts[i+1] != "" {
+					return IgTarget{Type: "stories", Username: parts[i+1]}, nil
+				}
+			}
+		case "highlights":
 			if i+1 < len(parts) && parts[i+1] != "" {
-				return IgTarget{Type: "stories", Username: parts[i+1]}, nil
+				return IgTarget{Type: "highlight", HighlightID: parts[i+1]}, nil
 			}
 		}
 	}
@@ -891,6 +904,220 @@ func fetchIgStories(ctx context.Context, client *http.Client, cookiesFile, csrfT
 	return nil, lastErr
 }
 
+// reelEntry is one media entry inside a feed/reels_media response. A highlight
+// and an active-stories reel share this shape; Instagram names the owning actor
+// either "user" (web/mobile) or "owner" (some private endpoints), so both are
+// captured. Usernames drive the output path so highlight content still lands
+// under instagram/<username>/ even when the URL only carries a highlight id.
+type reelEntry struct {
+	User  igUserResult  `json:"user"`
+	Owner igUserResult  `json:"owner"`
+	Items []igFeedMedia `json:"items"`
+}
+
+type igReelsResponse struct {
+	Reels map[string]reelEntry `json:"reels"`
+}
+
+// owningUsername returns the reel's owning username, preferring "user" and
+// falling back to "owner".
+func owningUsername(e reelEntry) string {
+	if e.User.Username != "" {
+		return e.User.Username
+	}
+	return e.Owner.Username
+}
+
+// pickReelItems returns the items for the requested reel key when present,
+// otherwise the first reel with items (mirrors fetchIgStories' first non-empty
+// reel behaviour) and the owning username of the selected reel.
+func pickReelItems(reels map[string]reelEntry, reelKey string) ([]igFeedMedia, string) {
+	if r, ok := reels[reelKey]; ok && len(r.Items) > 0 {
+		return r.Items, owningUsername(r)
+	}
+	for _, r := range reels {
+		if len(r.Items) > 0 {
+			return r.Items, owningUsername(r)
+		}
+	}
+	return nil, ""
+}
+
+// fetchIgHighlightStories fetches every story item within a single highlight.
+//
+// Instagram serves highlight reels through the same /feed/reels_media/ endpoint
+// used for active stories (see fetchIgStories); the only difference is the
+// reel_ids value: a highlight is addressed as "highlight:<highlight_id>" instead
+// of a bare numeric user id. The response therefore has the same shape
+// ({"reels": {"highlight:<id>": {"user": {...}, "items": [...]}}}), and the
+// owning username is carried in the reel's user/owner object.
+//
+// Retry/429/rate-limit handling mirrors fetchIgStories. When the bare
+// reel_ids=highlight:<id> GET yields an empty highlight for certain account/link
+// combinations, a second attempt as a form POST additionally advertises
+// supported_capabilities_new — the JSON-encoded capability list the web/mobile
+// clients send with reels_media — which resolves it in practice.
+func fetchIgHighlightStories(ctx context.Context, client *http.Client, cookiesFile, csrfToken, highlightID string, rl *ratelimit.Manager) ([]igFeedMedia, string, error) {
+	reelKey := "highlight:" + highlightID
+	params := url.Values{}
+	params.Set("reel_ids", reelKey)
+	endpoint := fmt.Sprintf("%s/feed/reels_media/?%s", igAPIBase, params.Encode())
+
+	var lastErr error
+	for attempt := 1; attempt <= igMaxAttempts; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil, "", fmt.Errorf("new request: %w", err)
+		}
+		headers, err := igHeaders(cookiesFile, csrfToken)
+		if err != nil {
+			return nil, "", err
+		}
+		req.Header = headers
+
+		if rl != nil {
+			_ = rl.GetLimiter("i.instagram.com").Wait(ctx)
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, "", fmt.Errorf("http: %w", err)
+			}
+			lastErr = fmt.Errorf("http: %w", err)
+			if attempt == igMaxAttempts {
+				return nil, "", fmt.Errorf("instagram highlight request failed after %d attempts: %w", attempt, lastErr)
+			}
+			time.Sleep(igRetryBackoff << min(attempt-1, 3))
+			continue
+		}
+
+		if resp.StatusCode >= 400 {
+			preview, _ := io.ReadAll(io.LimitReader(resp.Body, igErrorPreviewLimit))
+			_ = resp.Body.Close()
+			body := string(preview)
+			lastErr = fmt.Errorf("instagram highlight status %d", resp.StatusCode)
+			fmt.Fprintf(os.Stderr, "[instagram] response: %s\n", sanitizeErrorBody(body))
+			if resp.StatusCode == http.StatusTooManyRequests {
+				delay := igMaxRetryBackoff
+				if ra := resp.Header.Get("Retry-After"); ra != "" {
+					if sec, err := strconv.Atoi(ra); err == nil && sec > 0 {
+						delay = time.Duration(sec) * time.Second
+					}
+				}
+				fmt.Fprintf(os.Stderr, "[instagram] rate limited (429), waiting %v...\n", delay)
+				time.Sleep(delay)
+				continue
+			}
+			if resp.StatusCode >= 400 && resp.StatusCode < 500 && attempt == igMaxAttempts {
+				return nil, "", lastErr
+			}
+			if resp.StatusCode >= 500 && attempt < igMaxAttempts {
+				time.Sleep(igRetryBackoff << min(attempt-1, 3))
+				continue
+			}
+			return nil, "", lastErr
+		}
+
+		respBody, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			return nil, "", fmt.Errorf("read body: %w", err)
+		}
+
+		var result igReelsResponse
+		if err := json.Unmarshal(respBody, &result); err != nil {
+			return nil, "", fmt.Errorf("decode: %w", err)
+		}
+
+		if items, username := pickReelItems(result.Reels, reelKey); len(items) > 0 {
+			fmt.Fprintf(os.Stderr, "[instagram] found %d stories in highlight %s\n", len(items), highlightID)
+			return items, username, nil
+		}
+
+		// Bare reel_ids=highlight:<id> occasionally returns an empty highlight.
+		// A POST that also advertises supported_capabilities_new recovers it.
+		if items, username, ok := fetchIgHighlightStoriesWithCaps(ctx, client, cookiesFile, csrfToken, reelKey, rl); ok {
+			fmt.Fprintf(os.Stderr, "[instagram] found %d stories in highlight %s (capability retry)\n", len(items), highlightID)
+			return items, username, nil
+		}
+	}
+	return nil, "", fmt.Errorf("instagram: no stories found for highlight %s", highlightID)
+}
+
+// supported_capabilities_new payload, mirroring the capability list the Instagram
+// web/mobile reels_media clients send. Included only in the recovery POST when a
+// highlight returns empty; it is harmless to also send on the primary request.
+var igHighlightCapabilities = []string{
+	"android_usage_in_app_grid",
+	"atv_watch_media_playback",
+	"capsule_v2_creation_banner",
+	"capsule_v2_footer_section",
+	"capsule_v2_quick_play",
+	"draggable_show_reels_stacks",
+	"dynamic_group_creation",
+	"fb_feed_v3",
+	"ig_portrait_transitions",
+	"lens_video",
+	"live_thread",
+	"music",
+	"photos_of_you",
+	"reel_24h_stories",
+	"reels_captions",
+	"tabbed_profile",
+	"threaded_comment_history",
+	"threaded_comment_control",
+	"video_muti_upload",
+}
+
+// fetchIgHighlightStoriesWithCaps retries a highlight fetch as a form POST that
+// additionally advertises supported_capabilities_new. Returns ok=false if the
+// attempt fails or still yields no items.
+func fetchIgHighlightStoriesWithCaps(ctx context.Context, client *http.Client, cookiesFile, csrfToken, reelKey string, rl *ratelimit.Manager) ([]igFeedMedia, string, bool) {
+	capsJSON, err := json.Marshal(igHighlightCapabilities)
+	if err != nil {
+		return nil, "", false
+	}
+	body := url.Values{}
+	body.Set("reel_ids", reelKey)
+	body.Set("supported_capabilities_new", string(capsJSON))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s/feed/reels_media/", igAPIBase), strings.NewReader(body.Encode()))
+	if err != nil {
+		return nil, "", false
+	}
+	headers, err := igHeaders(cookiesFile, csrfToken)
+	if err != nil {
+		return nil, "", false
+	}
+	headers.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+	req.Header = headers
+
+	if rl != nil {
+		_ = rl.GetLimiter("i.instagram.com").Wait(ctx)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, "", false
+	}
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, igErrorPreviewLimit))
+	_ = resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, "", false
+	}
+
+	var result igReelsResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, "", false
+	}
+	items, username := pickReelItems(result.Reels, reelKey)
+	if len(items) == 0 {
+		return nil, "", false
+	}
+	return items, username, true
+}
+
 func igMediaTypeName(mediaType int) string {
 	switch mediaType {
 	case 1:
@@ -1136,6 +1363,15 @@ func ScanInstagram(ctx context.Context, rawURL, outDir string, cookiesFile strin
 		}
 		username = target.Username
 
+	case "highlight":
+		posts, username, err = fetchIgHighlightStories(ctx, client, cookiesFile, csrfToken, target.HighlightID, opts.RateLimiter)
+		if err != nil {
+			return manifest.Manifest{}, fmt.Errorf("fetch highlight: %w", err)
+		}
+		if username == "" {
+			username = "highlight_" + target.HighlightID
+		}
+
 	case "post", "reel":
 		post, err := fetchSingleIgPost(ctx, client, cookiesFile, csrfToken, target.Shortcode, opts.RateLimiter)
 		if err != nil {
@@ -1193,6 +1429,15 @@ func DownloadInstagram(ctx context.Context, rawURL, outDir string, cookiesFile s
 			return err
 		}
 		username = target.Username
+
+	case "highlight":
+		posts, username, err = fetchIgHighlightStories(ctx, client, cookiesFile, csrfToken, target.HighlightID, opts.RateLimiter)
+		if err != nil {
+			return fmt.Errorf("fetch highlight: %w", err)
+		}
+		if username == "" {
+			username = "highlight_" + target.HighlightID
+		}
 
 	case "post", "reel":
 		post, err := fetchSingleIgPost(ctx, client, cookiesFile, csrfToken, target.Shortcode, opts.RateLimiter)
@@ -1442,6 +1687,15 @@ func ScanInstagramResolved(ctx context.Context, rawURL, outDir, cookiesFile stri
 		}
 		username = target.Username
 
+	case "highlight":
+		posts, username, err = fetchIgHighlightStories(ctx, client, cookiesFile, csrfToken, target.HighlightID, opts.RateLimiter)
+		if err != nil {
+			return resolve.Source{}, fmt.Errorf("fetch highlight: %w", err)
+		}
+		if username == "" {
+			username = "highlight_" + target.HighlightID
+		}
+
 	case "post", "reel":
 		post, err := fetchSingleIgPost(ctx, client, cookiesFile, csrfToken, target.Shortcode, opts.RateLimiter)
 		if err != nil {
@@ -1476,6 +1730,10 @@ func ScanInstagramResolved(ctx context.Context, rawURL, outDir, cookiesFile stri
 	if target.Type == "stories" {
 		kind = resolve.KindSingle
 		canonicalURL = fmt.Sprintf("https://www.instagram.com/stories/%s/", username)
+	}
+	if target.Type == "highlight" {
+		kind = resolve.KindSingle
+		canonicalURL = fmt.Sprintf("https://www.instagram.com/stories/highlights/%s/", target.HighlightID)
 	}
 	src := resolve.NewSource(rawURL, canonicalURL, kind, "instagram")
 	src.Author = username
