@@ -9,6 +9,8 @@ func Hint(err error) string {
 	}
 	h := strings.ToLower(err.Error())
 	switch {
+	case containsAny(h, "not supported by this ffmpeg build"):
+		return "This ffmpeg build does not have the selected hardware AV1 encoder. Re-run 'provenance install' or check 'ffmpeg -encoders', then pass --encoder for a backend your build supports (qsv, amf, or nvenc)."
 	case containsAny(h, "http error 401", "http error 403", "forbidden", "unauthorized", "private video", "members-only", "login required"):
 		return "This looks like an authentication problem. Try --cookies cookies.txt or --cookies-from-browser chrome/edge/firefox."
 	case containsAny(h, "too many requests", "http error 429", "rate limit", "temporarily blocked"):

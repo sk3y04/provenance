@@ -32,6 +32,13 @@ provenance archive collection wallpapers --collection saved-media
 
 # Import a web page directly to vault (no grab/collect needed)
 provenance archive import-web https://docs.docker.com/compose/ --collection docker-docs
+
+# Transcode a whole library to hardware-accelerated AV1 (Intel QuickSync)
+provenance encode --dir ~/Movies --encoder qsv
+# Transcode one file, quiet quality, with a custom output suffix
+provenance encode --file ~/Movies/clip.mp4 --quality 22 --suffix hq
+# Preview the exact ffmpeg commands without encoding anything
+provenance encode --dir ~/Movies --dry-run
 ```
 
 Single binary. No Python, Node, or runtime dependencies beyond [yt-dlp](https://github.com/yt-dlp/yt-dlp) + ffmpeg (auto-installed on first run).

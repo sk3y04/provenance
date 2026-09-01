@@ -322,6 +322,9 @@ Twitter imposes aggressive rate limits on guest tokens (~150 requests/15min). Re
 ### `config`
 `Config` struct with all user-configurable download options. JSON-serializable for session/watch/history persistence.
 
+### `encode`
+Hardware-accelerated AV1 transcode. `Options` holds every `provenance encode` flag as a dedicated struct (kept separate from `config.Config` since the encoder has no download/session semantics). Resolves a hardware backend (Intel QuickSync `av1_qsv`, AMD AMF `av1_amf`, NVIDIA NVENC `av1_nvenc`, or `auto` probing `ffmpeg -encoders`), translates a canonical QSV `global_quality` scale (1..51) onto each backend's native flag (AMF `cq_quality`, NVENC `crf`), builds the ffmpeg invocation (Matroska container, audio/subtitle + metadata copy, per-device GOP/lookahead/b-frame flags), and fans the batch out over one `worker.Pool` per device. `Discover` probes available codecs, maps `--preset` per backend, and detects per-file fps via ffprobe.
+
 ### `dispatcher`
 URL classification, routing, batch dispatch, browser fallback orchestration, URL archives, link cache persistence, and the `Options`/`Reporter` types that glue the system together.
 

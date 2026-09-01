@@ -51,6 +51,7 @@ provenance
 ├── search <QUERY>                      Full-text search across archived content
 ├── install                           Pre-install yt-dlp + ffmpeg
 ├── tui                              Launch interactive terminal UI
+├── encode [flags]                   Transcode local videos to AV1 (hardware-accelerated)
 └── completion <bash|zsh|fish|powershell>
 ```
 
@@ -424,6 +425,41 @@ provenance completion zsh > "${fpath[1]}/_provenance"
 provenance completion fish > ~/.config/fish/completions/provenance.fish
 provenance completion powershell | Out-String | Invoke-Expression
 ```
+
+---
+
+## `provenance encode [flags]`
+
+Batch-convert local video files to hardware-accelerated AV1 in an `.mkv` container. Inputs are scanned from a directory (or a single `--file`), transcoded through a GPU backend (Intel QuickSync, AMD AMF, or NVIDIA NVENC), and written as AV1 — audio/subtitle streams and container metadata are copied; source files are never modified. Work is fanned out across one worker pool per requested device, so multiple GPUs can encode in parallel.
+
+Encoder selection probes your installed `ffmpeg`: `auto` picks the first available hardware AV1 codec (QSV preferred); pass `--encoder qsv|amf|nvenc` to pin one. An explicit encoder not present in the build is rejected with a `not supported by this ffmpeg build` error. Requires `ffmpeg` and `ffprobe` on `PATH` (the latter for per-file frame-rate detection).
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--dir` | string | - | Source directory to scan for videos (alternative to `--file`) |
+| `--file` | string | - | Single input video file (alternative to `--dir`) |
+| `--recursive` | bool | `false` | Recurse into subdirectories |
+| `--ext` | string | `mp4,mkv,mov,avi,ts,webm` | Comma-separated input extensions to match (no leading dot) |
+| `--out` | string | `<dir>/av1_qN` | Output directory (default: `<dir>/av1_qN`) |
+| `--suffix` | string | `av1-qN` | Suffix inserted before `.mkv` in output names |
+| `--overwrite` | bool | `false` | Re-encode even if the output already exists |
+| `--encoder` | string | `auto` | AV1 backend: `qsv` (Intel), `amf` (AMD), `nvenc` (NVIDIA), or `auto` |
+| `--devices` | string | `/dev/dri/renderD128` | Comma-separated render nodes (QSV/AMF) or GPU indices (NVENC) |
+| `--quality` | int | `30` | Quality on the canonical QSV `global_quality` scale 1..51 (20–22 near-transparent, 24–26 very good, 28–30 aggressive, 32+ archival/animation only); mapped to AMF `cq_quality` / NVENC `crf` |
+| `--preset` | string | `medium` | Speed-vs-efficiency hint, mapped per backend (QSV `fast`/`slow`, NVENC `hp`/`hq`/`slow_hq`, AMF `ultrafast`/`balanced`/`maximum`) |
+| `--gop-seconds` | float | `10` | Keyframe interval in seconds; converted to a frame count per file using its ffprobe-detected fps |
+| `--lookahead-depth` | int | `100` | Look-ahead frames (QSV max 100; `<= 0` disables the flag) |
+| `--bframes` | int | `7` | B-frames per GOP (`<= 0` disables; skipped on AMF, which lacks the concept) |
+| `--dry-run` | bool | `false` | Print the constructed ffmpeg commands without encoding |
+
+### Behavior notes
+
+- **Quality scale** — `--quality` is expressed once on the QSV `global_quality` scale (1–51, lower = better) and translated per backend: AMF receives `-cq_quality` on the same range, NVENC receives `-crf` mapped onto 1–33.
+- **Output naming** — each output is `<base>.<suffix>.mkv` (e.g. `clip.av1-q30.mkv`), written next to the source unless `--out` is set. The scan skips any directory named `av1_q*` or equal to the output dir, so re-runs do not re-encode their own output.
+- **Concurrency** — one `worker.Pool` is created per device; each job is submitted with permanent-error semantics so a failed encode never overwrites another's in-progress output.
+- **`--dry-run`** — prints each device's full `ffmpeg` command (shell-escaped, no shell invoked) and touches no files or logs.
 
 ---
 

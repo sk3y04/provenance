@@ -24,6 +24,7 @@ import (
 	"github.com/sk3y04/provenance/internal/config"
 	"github.com/sk3y04/provenance/internal/diagnose"
 	"github.com/sk3y04/provenance/internal/dispatcher"
+	"github.com/sk3y04/provenance/internal/encode"
 	"github.com/sk3y04/provenance/internal/extractor"
 	"github.com/sk3y04/provenance/internal/importers"
 	"github.com/sk3y04/provenance/internal/manifest"
@@ -75,6 +76,22 @@ var (
 	flagEvery              string
 	flagKeep               int
 	flagChromePath         string
+
+	flagEncodeDir       string
+	flagEncodeFile      string
+	flagEncodeRecursive bool
+	flagEncodeExt       string
+	flagEncodeOut       string
+	flagEncodeSuffix    string
+	flagEncodeOverwrite bool
+	flagEncodeEncoder   string
+	flagEncodeDevices   string
+	flagEncodeQuality   int
+	flagEncodePreset    string
+	flagEncodeGOP       float64
+	flagEncodeLookahead int
+	flagEncodeBFrames   int
+	flagEncodeDryRun    bool
 )
 
 func main() {
@@ -122,6 +139,7 @@ CLI mode - fast one-shot commands for scripts and automation:
   provenance sessions   list|export  Manage download sessions
   provenance watch      add|run      Recurring download subscriptions
   provenance install                 Pre-install yt-dlp + ffmpeg
+  provenance encode                  Transcode local videos to hardware-accelerated AV1
   provenance tui                     Interactive terminal UI
   provenance completion              Generate shell completions
 
@@ -144,6 +162,7 @@ search. No runtime dependencies beyond yt-dlp + ffmpeg.`,
 	root.AddCommand(vaultCmd())
 	root.AddCommand(searchCmd())
 	root.AddCommand(tuiCmd())
+	root.AddCommand(encodeCmd())
 	root.AddCommand(completionCmd())
 
 	root.PersistentFlags().StringVar(&flagChromePath, "chrome-path", "", "Path to Chrome/Chromium executable (for browser fallback and import-web)")
@@ -218,6 +237,80 @@ func downloadCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&flagNoArchive, "no-archive", false, "Disable archives entirely (re-attempt every URL and ignore yt-dlp download-archive)")
 	cmd.Flags().StringVar(&flagSession, "session", "", "Save progress under a named resumable session")
 	return cmd
+}
+
+func encodeCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "encode [flags]",
+		Short: "Transcode local video files to hardware-accelerated AV1 (.mkv)",
+		Long: `encode batch-converts local video files to AV1 using hardware
+acceleration (Intel QuickSync, AMD AMF, or NVIDIA NVENC), fanning work across
+one or more GPUs. Audio and subtitle streams are copied, container metadata is
+preserved, and outputs are always written to an .mkv container. Source files are
+never modified.
+
+Encoder auto-detection probes your ffmpeg build; pass --encoder to choose a
+specific backend. Use --dry-run to preview the exact ffmpeg commands.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			opts := encode.Options{
+				Dir:        flagEncodeDir,
+				File:       flagEncodeFile,
+				Recursive:  flagEncodeRecursive,
+				Ext:        manifest.ParseCSV(flagEncodeExt),
+				OutDir:     flagEncodeOut,
+				Suffix:     flagEncodeSuffix,
+				Overwrite:  flagEncodeOverwrite,
+				Encoder:    flagEncodeEncoder,
+				Devices:    splitDevices(flagEncodeDevices),
+				Quality:    flagEncodeQuality,
+				Preset:     flagEncodePreset,
+				GOPSeconds: flagEncodeGOP,
+				Lookahead:  flagEncodeLookahead,
+				BFrames:    flagEncodeBFrames,
+				DryRun:     flagEncodeDryRun,
+			}
+			res, err := encode.Run(cmd.Context(), opts, nil)
+			if err != nil {
+				return err
+			}
+			_ = res // summary already printed to stderr by encode.Run
+			return nil
+		},
+	}
+	addEncodeFlags(cmd)
+	return cmd
+}
+
+func addEncodeFlags(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&flagEncodeDir, "dir", "", "Source directory to scan for videos")
+	cmd.Flags().StringVar(&flagEncodeFile, "file", "", "Single input video file (alternative to --dir)")
+	cmd.Flags().BoolVar(&flagEncodeRecursive, "recursive", false, "Recurse into subdirectories")
+	cmd.Flags().StringVar(&flagEncodeExt, "ext", "mp4,mkv,mov,avi,ts,webm", "Comma-separated input extensions to match")
+	cmd.Flags().StringVar(&flagEncodeOut, "out", "", "Output directory (default: <dir>/av1_qN)")
+	cmd.Flags().StringVar(&flagEncodeSuffix, "suffix", "", "Suffix inserted before .mkv in output names (default: av1-qN)")
+	cmd.Flags().BoolVar(&flagEncodeOverwrite, "overwrite", false, "Re-encode even if the output already exists")
+	cmd.Flags().StringVar(&flagEncodeEncoder, "encoder", "auto", "AV1 backend: qsv (Intel), amf (AMD), nvenc (NVIDIA), or auto")
+	cmd.Flags().StringVar(&flagEncodeDevices, "devices", "/dev/dri/renderD128", "Comma-separated render nodes (QSV/AMF) or GPU indices (NVENC)")
+	cmd.Flags().IntVar(&flagEncodeQuality, "quality", 30, "QSV global_quality 1..51 (20-22 near-transparent, 24-26 very good, 28-30 aggressive, 32+ archival/animation only)")
+	cmd.Flags().StringVar(&flagEncodePreset, "preset", "medium", "Encoder preset for speed vs efficiency, mapped per backend")
+	cmd.Flags().Float64Var(&flagEncodeGOP, "gop-seconds", 10, "Keyframe interval in seconds (converted to frames per file using its fps)")
+	cmd.Flags().IntVar(&flagEncodeLookahead, "lookahead-depth", 100, "Look-ahead frames (QSV max 100)")
+	cmd.Flags().IntVar(&flagEncodeBFrames, "bframes", 7, "B-frames per GOP (skipped on backends that lack the concept)")
+	cmd.Flags().BoolVar(&flagEncodeDryRun, "dry-run", false, "Print the constructed ffmpeg commands without encoding")
+}
+
+// splitDevices splits a comma-separated device list, trimming whitespace and
+// dropping blanks while preserving case (render-node paths such as
+// /dev/dri/renderD128 are case-sensitive and must not be lowercased).
+func splitDevices(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func scanCmd() *cobra.Command {
