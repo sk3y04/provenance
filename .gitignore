@@ -9,3 +9,6 @@ __debug_bin
 **/.DS_Store
 .idea/
 /provenance
+
+# Local build cache (when GOCACHE is redirected into the repo)
+.go-build-cache/

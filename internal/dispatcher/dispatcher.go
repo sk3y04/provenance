@@ -119,6 +119,7 @@ const (
 	SiteTwitter
 	SiteReddit
 	SiteInstagram
+	SiteAlbum
 	SiteGeneric
 )
 
@@ -132,6 +133,8 @@ func (s Site) String() string {
 		return "reddit"
 	case SiteInstagram:
 		return "instagram"
+	case SiteAlbum:
+		return "album"
 	case SiteGeneric:
 		return "generic"
 	}
@@ -154,6 +157,8 @@ func Classify(rawURL string) (Site, error) {
 		return SiteReddit, nil
 	case strings.Contains(host, "instagram"):
 		return SiteInstagram, nil
+	case extractor.IsAlbumURL(rawURL):
+		return SiteAlbum, nil
 	default:
 		return SiteGeneric, nil
 	}
@@ -224,6 +229,15 @@ func Dispatch(ctx context.Context, rawURL string, opts Options) (err error) {
 			Limit:        opts.PostLimit,
 			RateLimiter:  opts.RateLimiter,
 			IncludePosts: opts.IncludePosts,
+		}, opts.DryRun)
+
+	case SiteAlbum:
+		return extractor.DownloadAlbum(ctx, rawURL, opts.OutputDir, opts.CookiesFile, extractor.AlbumOptions{
+			Filter:      opts.Filter,
+			SpeedLimit:  opts.SpeedLimit,
+			Progress:    opts.FileProgress,
+			Limit:       opts.PostLimit,
+			RateLimiter: opts.RateLimiter,
 		}, opts.DryRun)
 
 	case SiteGeneric:
@@ -303,6 +317,12 @@ func Scan(ctx context.Context, rawURL string, opts Options) (manifest.Manifest, 
 			RateLimiter:  opts.RateLimiter,
 			IncludePosts: opts.IncludePosts,
 		})
+	case SiteAlbum:
+		m, err = extractor.ScanAlbum(ctx, rawURL, opts.OutputDir, opts.CookiesFile, extractor.AlbumOptions{
+			Filter:      opts.Filter,
+			Limit:       opts.PostLimit,
+			RateLimiter: opts.RateLimiter,
+		})
 	default:
 		m, err = extractor.ScanYtdlp(ctx, rawURL, extractor.YtdlpOptions{
 			OutputDir:          opts.OutputDir,
@@ -349,6 +369,12 @@ func ScanResolved(ctx context.Context, rawURL string, opts Options) (resolve.Sou
 			Limit:        opts.PostLimit,
 			RateLimiter:  opts.RateLimiter,
 			IncludePosts: opts.IncludePosts,
+		})
+	case SiteAlbum:
+		return extractor.ScanAlbumResolved(ctx, rawURL, opts.OutputDir, opts.CookiesFile, extractor.AlbumOptions{
+			Filter:      opts.Filter,
+			Limit:       opts.PostLimit,
+			RateLimiter: opts.RateLimiter,
 		})
 	default:
 		return extractor.ScanYtdlpResolved(ctx, rawURL, extractor.YtdlpOptions{
@@ -597,7 +623,7 @@ func BatchDispatch(ctx context.Context, path string, opts Options) error {
 			continue
 		}
 		switch site {
-		case SiteTwitter, SiteReddit, SiteInstagram:
+		case SiteTwitter, SiteReddit, SiteInstagram, SiteAlbum:
 			slow = append(slow, u)
 		default:
 			fast = append(fast, u)

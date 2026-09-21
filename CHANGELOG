@@ -5,11 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2026-09-01]
 
 ### Added
 - **Instagram Story Highlights**: `provenance grab https://www.instagram.com/stories/highlights/<id>/` now downloads every story in a highlight — images, videos, and multi-slide carousels — in one command. `ParseIgURL` recognizes the `/stories/highlights/<id>/` path as a new `highlight` target (kept distinct from active `/stories/<username>/` stories). `fetchIgHighlightStories` reuses the same `/feed/reels_media/` endpoint as active stories, addressing the reel via `reel_ids=highlight:<id>`, with `429`/rate-limit backoff, error-preview logging, and `igMaxAttempts` retry matching the story path. The owning username is resolved from the highlight response's `user`/`owner` object so output still lands under `instagram/<username>/`, falling back to `highlight_<id>` when unresolvable; a `supported_capabilities_new` POST recovery is included for highlights that return empty on the bare GET. Wired through `ScanInstagram`, `DownloadInstagram`, and `ScanInstagramResolved`.
 - **AV1 transcode (`provenance encode`)**: batch-convert local video files to hardware-accelerated AV1 in an `.mkv` container, fanning work across one or more GPUs. New `internal/encode/` package (`encoder`, `runner`, `discover`, `run`) with `EncodeJob`, `Encoder`, and `Options`. Three hardware backends — Intel QuickSync (`av1_qsv`, `--encoder qsv`), AMD AMF (`av1_amf`, `amf`), NVIDIA NVENC (`av1_nvenc`, `nvenc`) — plus `auto`, which probes `ffmpeg -encoders` and selects the first available codec (QSV preferred); explicit selections are validated against the installed build. Quality uses a canonical QSV `global_quality` scale (1..51) translated per backend (AMF `cq_quality`, NVENC `crf` 1..33). Flags: `--dir`/`--file`, `--recursive`, `--ext` (default `mp4,mkv,mov,avi,ts,webm`), `--out`, `--suffix`, `--overwrite`, `--encoder`, `--devices` (render nodes/GPU indices, default `/dev/dri/renderD128`), `--quality` (30), `--preset` (per-backend mapped speed/efficiency hint), `--gop-seconds` (converted to a per-file frame interval via ffprobe-detected fps), `--lookahead-depth` (QSV max 100), `--bframes`, and `--dry-run` (prints the exact ffmpeg command without encoding). Inputs run through the shared `internal/worker` pool (one pool per device, permanent-error semantics), audio/subtitle streams and container metadata are copied, and source files are never modified. Encoder-mismatch errors carry the phrase `not supported by this ffmpeg build` so `diagnose` offers a hardware/hint recovery.
+
+### Changed
+- **Site routing**: refactored site classification and extractor internals; per-site host tables are now resolved at runtime instead of hardcoded.
 
 ## [0.6.1] - 2026-07-26
 
