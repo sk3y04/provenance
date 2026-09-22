@@ -1,0 +1,78 @@
+name: Security
+
+on:
+  push:
+    branches: [master]
+  schedule:
+    # Wednesday 04:17 UTC (deliberately non-round time)
+    - cron: '17 4 * * 3'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: security-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  snyk:
+    name: Snyk Open Source
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Download Go modules
+        run: go mod download
+      - name: Set up Snyk
+        uses: snyk/actions/setup@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0
+        with:
+          snyk-version: 1.1307.3
+      - name: Snyk test
+        id: snyk
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          SNYK_ORG: ${{ vars.SNYK_ORG }}
+          TARGET_REF: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          args=(
+            --file=go.mod
+            --severity-threshold=high
+            --fail-on=upgradable
+            --project-name=sk3y04/provenance
+            --target-reference="${TARGET_REF}"
+            --sarif-file-output=snyk.sarif
+          )
+
+          if [[ -n "${SNYK_ORG}" ]]; then
+            args+=(--org="${SNYK_ORG}")
+          fi
+
+          snyk test "${args[@]}"
+
+      - name: Upload SARIF to GitHub code scanning
+        if: always() && hashFiles('snyk.sarif') != ''
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        with:
+          sarif_file: snyk.sarif
+          category: snyk-open-source
+
+      - name: Enforce Snyk result
+        if: steps.snyk.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::error::Snyk found blocking vulnerabilities or could not complete the scan."
+          exit 1

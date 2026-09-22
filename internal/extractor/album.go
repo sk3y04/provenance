@@ -59,12 +59,12 @@ import (
 
 var (
 	albTransport = &http.Transport{
-		Proxy:               http.ProxyFromEnvironment,
-		DialContext:         (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-		ForceAttemptHTTP2:   true,
-		MaxIdleConns:        10,
-		IdleConnTimeout:     90 * time.Second,
-		TLSHandshakeTimeout: 15 * time.Second,
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          10,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   15 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
 	}
 
@@ -432,9 +432,7 @@ func scrapeAlbum(ctx context.Context, albumURL string, rl *ratelimit.Manager) (*
 	if m := albOGTitleRe.FindStringSubmatch(string(page)); m != nil && strings.TrimSpace(m[1]) != "" {
 		album.Title = strings.TrimSpace(m[1])
 	}
-	for _, f := range albFileLinks(string(page), albumURL) {
-		album.Files = append(album.Files, f)
-	}
+	album.Files = append(album.Files, albFileLinks(string(page), albumURL)...)
 	if len(album.Files) == 0 {
 		return nil, fmt.Errorf("album page listed no files (structure may have changed): %s", albumURL)
 	}

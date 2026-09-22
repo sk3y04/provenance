@@ -1,3 +1,4 @@
+// Package encode provides hardware-accelerated AV1 transcoding support.
 package encode
 
 import (
