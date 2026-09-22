@@ -2,9 +2,67 @@ package encode
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
+
+func TestResolveBinariesMissing(t *testing.T) {
+	prev := lookPath
+	lookPath = func(string) (string, error) { return "", errors.New("not found") }
+	t.Cleanup(func() { lookPath = prev })
+
+	_, _, err := resolveBinaries()
+	if err == nil {
+		t.Fatal("expected an error when ffmpeg is missing from PATH")
+	}
+	// The preflight error must explain the external prerequisite and give
+	// per-platform installation guidance.
+	for _, want := range []string{
+		"ffmpeg not found on PATH",
+		"external prerequisite",
+		"apt install ffmpeg",
+		"brew install ffmpeg",
+		"winget install Gyan.FFmpeg",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("preflight error missing %q:\n%s", want, err)
+		}
+	}
+}
+
+func TestResolveBinariesFFprobeMissing(t *testing.T) {
+	prev := lookPath
+	lookPath = func(name string) (string, error) {
+		if name == "ffmpeg" {
+			return "/usr/bin/ffmpeg", nil
+		}
+		return "", errors.New("not found")
+	}
+	t.Cleanup(func() { lookPath = prev })
+
+	_, _, err := resolveBinaries()
+	if err == nil {
+		t.Fatal("expected an error when ffprobe is missing from PATH")
+	}
+	if !strings.Contains(err.Error(), "ffprobe not found on PATH") {
+		t.Fatalf("expected ffprobe error, got %v", err)
+	}
+}
+
+func TestResolveBinariesPresent(t *testing.T) {
+	prev := lookPath
+	lookPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
+	t.Cleanup(func() { lookPath = prev })
+
+	ffmpeg, ffprobe, err := resolveBinaries()
+	if err != nil {
+		t.Fatalf("resolveBinaries: %v", err)
+	}
+	if ffmpeg != "/usr/bin/ffmpeg" || ffprobe != "/usr/bin/ffprobe" {
+		t.Fatalf("unexpected paths: %q %q", ffmpeg, ffprobe)
+	}
+}
 
 func TestParseExts(t *testing.T) {
 	got := parseExts(" MP4,.MKV ,mov , , .avi ")

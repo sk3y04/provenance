@@ -3,6 +3,7 @@ package encode
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -72,6 +73,21 @@ func allEncoders() string {
 		" V.....    av1_nvenc              NVIDIA NVENC AV1 encoder\n"
 }
 
+// stubBinaries puts fake ffmpeg/ffprobe paths on the stubbed PATH lookup so
+// Run's preflight passes without a real FFmpeg installation. It restores the
+// real lookPath when the test ends.
+func stubBinaries(t *testing.T) {
+	t.Helper()
+	prev := lookPath
+	lookPath = func(name string) (string, error) {
+		if name == "ffmpeg" || name == "ffprobe" {
+			return "/usr/bin/" + name, nil
+		}
+		return "", fmt.Errorf("%s not found on PATH", name)
+	}
+	t.Cleanup(func() { lookPath = prev })
+}
+
 func mkfile(t *testing.T, dir, name string) {
 	t.Helper()
 	p := filepath.Join(dir, name)
@@ -84,6 +100,7 @@ func mkfile(t *testing.T, dir, name string) {
 }
 
 func TestRunFanOutOverDevices(t *testing.T) {
+	stubBinaries(t)
 	dir := t.TempDir()
 	mkfile(t, dir, "a.mp4")
 	mkfile(t, dir, "b.mp4")
@@ -149,6 +166,7 @@ func TestRunFanOutOverDevices(t *testing.T) {
 }
 
 func TestRunSkipExisting(t *testing.T) {
+	stubBinaries(t)
 	dir := t.TempDir()
 	mkfile(t, dir, "a.mp4")
 	mkfile(t, dir, "b.mp4")
@@ -176,6 +194,7 @@ func TestRunSkipExisting(t *testing.T) {
 }
 
 func TestRunOverwriteReencodes(t *testing.T) {
+	stubBinaries(t)
 	dir := t.TempDir()
 	mkfile(t, dir, "a.mp4")
 	outDir := filepath.Join(dir, "av1_q30")
@@ -197,6 +216,7 @@ func TestRunOverwriteReencodes(t *testing.T) {
 }
 
 func TestRunReportsFailureAndNonZero(t *testing.T) {
+	stubBinaries(t)
 	dir := t.TempDir()
 	mkfile(t, dir, "a.mp4")
 
@@ -211,6 +231,7 @@ func TestRunReportsFailureAndNonZero(t *testing.T) {
 }
 
 func TestRunSingleFile(t *testing.T) {
+	stubBinaries(t)
 	dir := t.TempDir()
 	mkfile(t, dir, "solo.mov")
 
@@ -225,6 +246,7 @@ func TestRunSingleFile(t *testing.T) {
 }
 
 func TestRunDryRunInvokesNoEncoder(t *testing.T) {
+	stubBinaries(t)
 	dir := t.TempDir()
 	mkfile(t, dir, "a.mp4")
 	mkfile(t, dir, "b.mp4")
@@ -243,6 +265,7 @@ func TestRunDryRunInvokesNoEncoder(t *testing.T) {
 }
 
 func TestRunNoFilesErrors(t *testing.T) {
+	stubBinaries(t)
 	dir := t.TempDir()
 	fake := &fakeRunner{probeOut: qsvAvailable(), ffprobeOut: "24"}
 	_, err := Run(context.Background(), Options{Dir: dir, Encoder: "qsv"}, fake)
@@ -252,6 +275,7 @@ func TestRunNoFilesErrors(t *testing.T) {
 }
 
 func TestRunDefaultExtsAndOutDir(t *testing.T) {
+	stubBinaries(t)
 	dir := t.TempDir()
 	mkfile(t, dir, "keep.mp4")
 	mkfile(t, dir, "skip.txt")

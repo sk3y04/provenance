@@ -32,15 +32,14 @@ linters:
       checks:
         - "all"
         - "-QF1012"
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
 
 formatters:
   enable:
     - gofmt
     - goimports
-
-issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - errcheck
-        - gosec

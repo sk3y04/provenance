@@ -76,18 +76,34 @@ func pathIsInside(sub, dir string) bool {
 	return strings.HasPrefix(sub, dir+string(os.PathSeparator))
 }
 
+// lookPath resolves a binary on PATH. It is a package variable rather than a
+// CommandRunner method because PATH lookup is not command execution; tests
+// override it to exercise the preflight without a real ffmpeg installation.
+var lookPath = exec.LookPath
+
 // resolveBinaries locates ffmpeg and ffprobe on PATH, reusing the same
 // LookPath-based approach internal/extractor uses for ffmpeg discovery.
+// FFmpeg is an external prerequisite (provenance never installs it), so the
+// returned errors carry user-facing, per-platform installation guidance.
 func resolveBinaries() (ffmpeg, ffprobe string, err error) {
-	ffmpeg, err = exec.LookPath("ffmpeg")
+	ffmpeg, err = lookPath("ffmpeg")
 	if err != nil {
-		return "", "", fmt.Errorf("ffmpeg not found on PATH: %w", err)
+		return "", "", fmt.Errorf("ffmpeg not found on PATH\n%s", ffmpegPrereqError())
 	}
-	ffprobe, err = exec.LookPath("ffprobe")
+	ffprobe, err = lookPath("ffprobe")
 	if err != nil {
-		return "", "", fmt.Errorf("ffprobe not found on PATH (needed for per-file FPS detection): %w", err)
+		return "", "", fmt.Errorf("ffprobe not found on PATH (needed for per-file FPS detection)\n%s", ffmpegPrereqError())
 	}
 	return ffmpeg, ffprobe, nil
+}
+
+// ffmpegPrereqError is the user-facing guidance explaining that FFmpeg is an
+// external prerequisite and how to install it on each platform.
+func ffmpegPrereqError() string {
+	return "FFmpeg is an external prerequisite for 'provenance encode' (provenance does not install it). Install it with your platform's package manager:\n" +
+		"  Linux:   sudo apt install ffmpeg   (or dnf install ffmpeg / pacman -S ffmpeg)\n" +
+		"  macOS:   brew install ffmpeg\n" +
+		"  Windows: winget install Gyan.FFmpeg   (or choco install ffmpeg)"
 }
 
 // availableEncoders probes `ffmpeg -encoders` and reports which of the known
